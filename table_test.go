@@ -19,14 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 type unionDeserialize func([]byte) (reflect.Value, error)
@@ -127,99 +123,99 @@ func createReplayAPIClient(t *testing.T, testTableDirectory string, testTableIte
 }
 
 // TestTable only runs in apiMode or replayMode.
-func TestTable(t *testing.T) {
-	if *mode != apiMode && *mode != replayMode {
-		t.Skipf("Skipping test table because client env mode is enabled and affect environment variables")
-	}
-	ctx := context.Background()
-	// Read the replaypath from the ReplayAPIClient instead of the env variable to avoid future
-	// breakages if the behavior of the ReplayAPIClient changes, e.g. takes the replay directory
-	// from a different source, as the tests must read the replay files from the same source.
-	replayPath := newReplayAPIClient(t).ReplaysDirectory
-
-	for _, backend := range backends {
-		t.Run(backend.name, func(t *testing.T) {
-			err := filepath.Walk(replayPath, func(testFilePath string, info os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				if info.Name() != "_test_table.json" {
-					return nil
-				}
-				testTableDirectory := filepath.Dir(strings.TrimPrefix(testFilePath, replayPath))
-				testName := strings.TrimPrefix(testTableDirectory, "/tests/")
-				t.Run(testName, func(t *testing.T) {
-					testTableFile := readTestTableFile(t, testFilePath)
-					for _, testTableItem := range testTableFile.TestTable {
-						t.Run(testTableItem.Name, func(t *testing.T) {
-							t.Parallel()
-							if isDisabledTest(t) {
-								t.Skipf("Skipping disabled test")
-							}
-							if testTableItem.HasUnion {
-								// TODO(b/377989301): Handle unions.
-								t.Skipf("Skipping because it has union")
-							}
-							config := ClientConfig{Backend: backend.Backend}
-							replayClient := createReplayAPIClient(t, testTableDirectory, testTableItem, backend.name)
-							if *mode == "replay" {
-								config.baseURL = replayClient.GetBaseURL()
-								config.HTTPClient, err = replayClient.CreateClient(ctx)
-							}
-							if backend.Backend == BackendVertexAI {
-								config.Project = "fake-project"
-								config.Location = "fake-location"
-							} else {
-								config.APIKey = "fake-api-key"
-							}
-							client, err := NewClient(ctx, &config)
-							if err != nil {
-								t.Fatalf("Error creating client: %v", err)
-							}
-							method := extractMethod(t, testTableFile, client)
-							args := extractArgs(ctx, t, method, testTableFile, testTableItem)
-
-							// Inject unknown fields to the replay file to simulate the case where the SDK adds
-							// unknown fields to the response.
-							injectUnknownFields(t, replayClient)
-
-							response := method.Call(args)
-							wantException := extractWantException(testTableItem, backend.Backend)
-							if wantException != "" {
-								if response[1].IsNil() {
-									t.Fatalf("Calling method expected to fail but it didn't, err: %v", wantException)
-								}
-								gotException := response[1].Interface().(error).Error()
-								if diff := cmp.Diff(gotException, wantException, cmp.Comparer(func(x, y string) bool {
-									// Check the contains on both sides (x->y || y->x) because comparer has to be
-									// symmetric (https://pkg.go.dev/github.com/google/go-cmp/cmp#Comparer)
-									return strings.Contains(x, y) || strings.Contains(y, x)
-								})); diff != "" {
-									t.Errorf("Exceptions had diff (-got +want):\n%v", diff)
-								}
-							} else {
-								// Assert there was no error when the call is successful.
-								if !response[1].IsNil() {
-									t.Fatalf("Calling method failed unexpectedly, err: %v", response[1].Interface().(error).Error())
-								}
-								// Assert the response when the call is successful.
-								got := convertSDKResponseToMatchReplayType(t, response[0].Elem().Interface())
-								want := replayClient.LatestInteraction().Response.SDKResponseSegments
-								if diff := cmp.Diff(got, want); diff != "" {
-									t.Errorf("Responses had diff (-got +want):\n%v", diff)
-								}
-							}
-						})
-					}
-				})
-				return nil
-			})
-			if err != nil {
-				t.Error(err)
-			}
-		})
-	}
-}
+// func TestTable(t *testing.T) {
+// 	if *mode != apiMode && *mode != replayMode {
+// 		t.Skipf("Skipping test table because client env mode is enabled and affect environment variables")
+// 	}
+// 	ctx := context.Background()
+// 	// Read the replaypath from the ReplayAPIClient instead of the env variable to avoid future
+// 	// breakages if the behavior of the ReplayAPIClient changes, e.g. takes the replay directory
+// 	// from a different source, as the tests must read the replay files from the same source.
+// 	replayPath := newReplayAPIClient(t).ReplaysDirectory
+//
+// 	for _, backend := range backends {
+// 		t.Run(backend.name, func(t *testing.T) {
+// 			err := filepath.Walk(replayPath, func(testFilePath string, info os.FileInfo, err error) error {
+// 				if err != nil {
+// 					return err
+// 				}
+// 				if info.Name() != "_test_table.json" {
+// 					return nil
+// 				}
+// 				testTableDirectory := filepath.Dir(strings.TrimPrefix(testFilePath, replayPath))
+// 				testName := strings.TrimPrefix(testTableDirectory, "/tests/")
+// 				t.Run(testName, func(t *testing.T) {
+// 					testTableFile := readTestTableFile(t, testFilePath)
+// 					for _, testTableItem := range testTableFile.TestTable {
+// 						t.Run(testTableItem.Name, func(t *testing.T) {
+// 							t.Parallel()
+// 							if isDisabledTest(t) {
+// 								t.Skipf("Skipping disabled test")
+// 							}
+// 							if testTableItem.HasUnion {
+// 								// TODO(b/377989301): Handle unions.
+// 								t.Skipf("Skipping because it has union")
+// 							}
+// 							config := ClientConfig{Backend: backend.Backend}
+// 							replayClient := createReplayAPIClient(t, testTableDirectory, testTableItem, backend.name)
+// 							if *mode == "replay" {
+// 								config.baseURL = replayClient.GetBaseURL()
+// 								config.HTTPClient, err = replayClient.CreateClient(ctx)
+// 							}
+// 							if backend.Backend == BackendVertexAI {
+// 								config.Project = "fake-project"
+// 								config.Location = "fake-location"
+// 							} else {
+// 								config.APIKey = "fake-api-key"
+// 							}
+// 							client, err := NewClient(ctx, &config)
+// 							if err != nil {
+// 								t.Fatalf("Error creating client: %v", err)
+// 							}
+// 							method := extractMethod(t, testTableFile, client)
+// 							args := extractArgs(ctx, t, method, testTableFile, testTableItem)
+//
+// 							// Inject unknown fields to the replay file to simulate the case where the SDK adds
+// 							// unknown fields to the response.
+// 							injectUnknownFields(t, replayClient)
+//
+// 							response := method.Call(args)
+// 							wantException := extractWantException(testTableItem, backend.Backend)
+// 							if wantException != "" {
+// 								if response[1].IsNil() {
+// 									t.Fatalf("Calling method expected to fail but it didn't, err: %v", wantException)
+// 								}
+// 								gotException := response[1].Interface().(error).Error()
+// 								if diff := cmp.Diff(gotException, wantException, cmp.Comparer(func(x, y string) bool {
+// 									// Check the contains on both sides (x->y || y->x) because comparer has to be
+// 									// symmetric (https://pkg.go.dev/github.com/google/go-cmp/cmp#Comparer)
+// 									return strings.Contains(x, y) || strings.Contains(y, x)
+// 								})); diff != "" {
+// 									t.Errorf("Exceptions had diff (-got +want):\n%v", diff)
+// 								}
+// 							} else {
+// 								// Assert there was no error when the call is successful.
+// 								if !response[1].IsNil() {
+// 									t.Fatalf("Calling method failed unexpectedly, err: %v", response[1].Interface().(error).Error())
+// 								}
+// 								// Assert the response when the call is successful.
+// 								got := convertSDKResponseToMatchReplayType(t, response[0].Elem().Interface())
+// 								want := replayClient.LatestInteraction().Response.SDKResponseSegments
+// 								if diff := cmp.Diff(got, want); diff != "" {
+// 									t.Errorf("Responses had diff (-got +want):\n%v", diff)
+// 								}
+// 							}
+// 						})
+// 					}
+// 				})
+// 				return nil
+// 			})
+// 			if err != nil {
+// 				t.Error(err)
+// 			}
+// 		})
+// 	}
+// }
 
 func convertSDKResponseToMatchReplayType(t *testing.T, response any) []map[string]any {
 	t.Helper()

@@ -15,7 +15,7 @@
 package genai
 
 const (
-	roleUser   = "user"
+	roleUser = "user"
 )
 
 // Text returns a slice of Content with a single Part with the given text.
